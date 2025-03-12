@@ -13,22 +13,22 @@ library(progressr)
 # Load mediation function
 source("scripts/mediation_analysis.R")
 
-# ✅ Load Data
+# Load Data
 merged_04_clean <- fread("data/merged_04_clean.csv")  # Ensure the file is in the data folder
 
-# ✅ Enable Multi-core Processing
+# Enable Multi-core Processing
 num_cores <- parallel::detectCores() - 1  # Use all available cores except 1
 plan(multisession, workers = num_cores)
 cat("Using", num_cores, "cores for parallel processing.\n")
 
-# ✅ Convert data frame to data.table
+# Convert data frame to data.table
 setDT(merged_04_clean)
 
-# ✅ Generate All Combinations of Variables
+# Generate All Combinations of Variables
 combinations <- expand.grid(dietary_indices, maternal_core, infant_core, stringsAsFactors = FALSE)
 colnames(combinations) <- c("Diet", "Mediator", "Outcome")
 
-# ✅ Execute Mediation Analysis with Progress Bar
+# Execute Mediation Analysis with Progress Bar
 mediation_results <- data.table()
 with_progress({
   p <- progressor(steps = nrow(combinations))
@@ -40,8 +40,8 @@ with_progress({
   }))
 })
 
-# ✅ Save Results
+# Save Results
 write_xlsx(mediation_results, path = "results/mediation_results.xlsx")
 
-# ✅ Clean up
+# Clean up
 gc()
