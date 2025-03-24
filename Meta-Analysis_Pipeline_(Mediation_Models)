@@ -143,20 +143,20 @@ meta_summary_table <- meta_summary_table %>%
     Cochran_Q, Q_pval, Egger_p
   )
 
-# 🖨️ Display first few rows
+# Display first few rows
 print(head(meta_summary_table))
 
 #Save Results to Disk
-# 📁 Define output path
+# Define output path
 output_dir <- "C:/Users/eduar/.../Meta_Analysis_Results"
 dir.create(output_dir, showWarnings = FALSE)
 
-# 📄 Save each individual file’s results
+# Save each individual file’s results
 for (file_name in names(meta_results_list)) {
   write_xlsx(meta_results_list[[file_name]], path = file.path(output_dir, paste0(file_name, "_meta_results.xlsx")))
 }
 
-# 📄 Save combined summary
+# Save combined summary
 write_xlsx(meta_summary_table, path = file.path(output_dir, "All_Meta_Analysis_Results.xlsx"))
 
 cat("✅ All results have been saved to:", output_dir, "\n")
