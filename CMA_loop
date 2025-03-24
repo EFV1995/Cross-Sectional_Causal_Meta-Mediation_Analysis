@@ -1,3 +1,19 @@
+##################################################
+# Parallelized Mediation Analysis Pipeline
+# Author: Eduard Flores Ventura
+# Description: Performs high-throughput mediation analysis using parallel processing
+##################################################
+
+# 📦 Load Required Libraries
+library(data.table)       # Efficient data manipulation
+library(dplyr)            # General data wrangling
+library(mediation)        # Mediation analysis
+library(parallel)         # Core detection
+library(future)           # For multi-session plans
+library(future.apply)     # Parallel apply functions
+library(progressr)        # Nice progress bars
+library(writexl)          # Save output to Excel
+
 # ✅ Enable multi-core processing
 num_cores <- parallel::detectCores() - 1  # Use 21 out of 22 cores
 plan(multisession, workers = num_cores)
