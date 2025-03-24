@@ -1,0 +1,133 @@
+# Core data handling & analysis
+library(phyloseq)
+library(dplyr)
+library(tibble)
+library(ggplot2)
+library(ggrepel)
+library(factoextra)
+library(ggpubr)
+library(ggfortify)
+library(gridExtra)
+library(scales)
+
+#Data Extraction & PCA Computation
+# Extract sample metadata from phyloseq object
+metadata_mother <- as(sample_data(physeq_mother_clean), "data.frame")
+
+# Select dietary variables and clean missing values
+dietary_vars <- c("Total_DII_sum", "Total_DQI_sum", "Total_MMDS_sum", "Total_HEI_sum")
+dietary_data <- metadata_mother[, dietary_vars] %>%
+  mutate(across(everything(), as.numeric)) %>%
+  drop_na()
+
+# Perform PCA with scaling
+pca_model <- prcomp(dietary_data, scale. = TRUE, center = TRUE)
+
+# Extract scores and loadings
+pca_scores <- as.data.frame(pca_model$x)
+pca_scores$SampleID <- rownames(pca_scores)
+
+# % variance explained
+explained_var <- round(summary(pca_model)$importance[2, 1:2] * 100, 2)
+
+# Loadings for plotting
+pca_loadings <- as.data.frame(pca_model$rotation)
+pca_loadings$Variable <- rownames(pca_loadings)
+
+#PCA Plots (Samples, Loadings, Combined)
+#A. Sample PCA Scatterplot
+
+pca_scatter <- ggplot(pca_scores, aes(x = PC1, y = PC2)) +
+  geom_point(size = 3, alpha = 0.7, color = "blue") +
+  geom_text_repel(aes(label = SampleID), size = 3) +
+  theme_minimal() +
+  xlab(paste0("PC1 (", explained_var[1], "% variance)")) +
+  ylab(paste0("PC2 (", explained_var[2], "% variance)")) +
+  ggtitle("PCA Scatterplot of Samples")
+
+ggsave("PCA_Scatter_Dietary_Indices.png", plot = pca_scatter, width = 8, height = 6, dpi = 300)
+
+#B. Variable Loading Plot
+pca_loadings_plot <- ggplot(pca_loadings, aes(x = PC1, y = PC2)) +
+  geom_segment(aes(x = 0, y = 0, xend = PC1 * 3, yend = PC2 * 3),
+               arrow = arrow(length = unit(0.2, "cm")), color = "red") +
+  geom_text_repel(aes(label = Variable), size = 5) +
+  theme_minimal() +
+  xlab(paste0("PC1 (", explained_var[1], "% variance)")) +
+  ylab(paste0("PC2 (", explained_var[2], "% variance)")) +
+  ggtitle("PCA Variable Loadings")
+
+ggsave("PCA_Loadings_Dietary_Indices.png", plot = pca_loadings_plot, width = 8, height = 6, dpi = 300)
+
+#C. Combined Classic Biplot
+pca_biplot <- ggplot() +
+  geom_point(data = pca_scores, aes(x = PC1, y = PC2), size = 3, alpha = 0.7, color = "blue") +
+  geom_text_repel(data = pca_scores, aes(x = PC1, y = PC2, label = SampleID), size = 3) +
+  geom_segment(data = pca_loadings, aes(x = 0, y = 0, xend = PC1 * 3, yend = PC2 * 3), 
+               arrow = arrow(length = unit(0.2, "cm")), color = "red") +
+  geom_text_repel(data = pca_loadings, aes(x = PC1 * 3, y = PC2 * 3, label = Variable), 
+                  size = 5, color = "red") +
+  theme_minimal() +
+  xlab(paste0("PC1 (", explained_var[1], "% variance)")) +
+  ylab(paste0("PC2 (", explained_var[2], "% variance)")) +
+  ggtitle("PCA Biplot of Samples & Loadings")
+
+ggsave("PCA_Biplot_Dietary_Indices.png", plot = pca_biplot, width = 8, height = 6, dpi = 300)
+
+# Modern Biplot with Gradient
+
+pca_biplot_modern <- ggplot() +
+  geom_point(data = pca_scores, aes(x = PC1, y = PC2, color = PC1), size = 4, alpha = 0.8) +
+  geom_segment(data = pca_loadings, aes(x = 0, y = 0, xend = PC1 * 3, yend = PC2 * 3),
+               arrow = arrow(length = unit(0.25, "cm")), color = "black", linewidth = 1) +
+  geom_text_repel(data = pca_loadings, aes(x = PC1 * 3, y = PC2 * 3, label = Variable),
+                  size = 6, color = "black", fontface = "bold") +
+  theme_light(base_size = 14) +
+  xlab(paste0("PC1 (", explained_var[1], "% variance)")) +
+  ylab(paste0("PC2 (", explained_var[2], "% variance)")) +
+  ggtitle("PCA Biplot (Gradient by PC1)") +
+  scale_color_gradient(low = "#0099F7", high = "#F11712", name = "PC1 Score")
+
+ggsave("PCA_Biplot_Modern.png", plot = pca_biplot_modern, width = 10, height = 6, dpi = 300)
+
+#Clustering on PCA Scores (K-means)
+# Apply clustering and annotate clusters
+set.seed(123)
+pca_scores$Cluster <- kmeans(pca_scores[, 1:2], centers = 2)$cluster
+
+# Enhanced biplot with cluster ellipses
+pca_biplot_clustered <- ggplot(pca_scores, aes(x = PC1, y = PC2, color = as.factor(Cluster))) +
+  geom_point(size = 3, alpha = 0.7) +
+  stat_ellipse(aes(fill = as.factor(Cluster)), geom = "polygon", alpha = 0.1) +
+  geom_segment(data = pca_loadings, aes(x = 0, y = 0, xend = PC1 * 2, yend = PC2 * 2), 
+               arrow = arrow(length = unit(0.3, "cm")), color = "black") +
+  geom_text_repel(data = pca_loadings, aes(x = PC1 * 2.2, y = PC2 * 2.2, 
+                                           label = paste0(Variable, "\n(", round(abs(PC1) * 100, 1), "%)")), 
+                  size = 5, color = "black") +
+  scale_color_manual(values = c("#E41A1C", "#377EB8", "#4DAF4A")) +
+  theme_minimal() +
+  xlab(paste0("PC1 (", explained_var[1], "% variance)")) +
+  ylab(paste0("PC2 (", explained_var[2], "% variance)")) +
+  ggtitle("PCA Biplot with Clustering")
+
+ggsave("PCA_Biplot_Clustered.png", plot = pca_biplot_clustered, width = 10, height = 6, dpi = 300)
+
+# Visualize Loadings: Bar Chart
+loadings_plot <- ggplot(pca_loadings, aes(x = reorder(Variable, PC1), y = PC1)) +
+  geom_bar(stat = "identity", fill = "#377EB8") +
+  coord_flip() +
+  theme_minimal() +
+  xlab("") + ylab("Contribution to PC1") +
+  ggtitle("PCA Loadings (Contributions of Dietary Indices)")
+
+#Combined Plot: PCA Biplot + Loadings
+
+combined_plot <- ggarrange(pca_biplot_clustered, loadings_plot, ncol = 1, heights = c(2, 1))
+ggsave("PCA_Biplot_Combined.png", plot = combined_plot, width = 11.2, height = 9.5, dpi = 300)
+
+#Elbow Method to Optimize K
+elbow_plot <- fviz_nbclust(pca_scores[, 1:2], kmeans, method = "wss") +
+  theme_minimal() +
+  ggtitle("Elbow Method for Optimal Clusters")
+
+ggsave("Elbow_Method_PCA_Clusters.png", plot = elbow_plot, width = 10, height = 6, dpi = 300)
