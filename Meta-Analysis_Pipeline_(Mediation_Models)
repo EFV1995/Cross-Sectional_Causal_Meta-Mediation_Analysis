@@ -1,0 +1,163 @@
+Meta-Analysis Pipeline (Mediation Models)
+Description:
+This script performs batch meta-analysis (Fixed Effects) of mediation results stored in .xlsx files within a ZIP archive. It extracts, processes, analyzes, and exports statistical summaries across multiple datasets.
+
+# Core Packages
+library(readxl)      # Read Excel files
+library(dplyr)       # Data manipulation
+library(tibble)      # Tidy data structures
+library(metafor)     # Meta-analysis functions
+library(writexl)     # Save Excel files
+library(zip)         # Unzipping utility
+
+# Path to ZIP archive of mediation results
+zip_file <- "C:/Users/eduar/.../CMA_results.zip"
+
+# Temporary extraction folder
+temp_dir <- tempfile()
+dir.create(temp_dir)
+
+# Extract all .xlsx files
+unzip(zip_file, exdir = temp_dir)
+
+# List and import Excel files into a named list
+excel_files <- dir(temp_dir, pattern = "\\.xlsx$", full.names = TRUE)
+meta_data_list <- lapply(excel_files, read_excel)
+names(meta_data_list) <- gsub("\\.xlsx$", "", basename(excel_files))
+
+# Confirm import
+print(names(meta_data_list))
+
+#Meta-Analysis Loop for Each File
+# Store results from each file
+meta_results_list <- list()
+
+# Process each dataset
+for (file_name in names(meta_data_list)) {
+  
+  df <- meta_data_list[[file_name]]
+
+  # Unique Exposure–Outcome pairs
+  combinations <- df %>%
+    select(Exposure, Outcome) %>%
+    distinct()
+
+  # Storage for results (per file)
+  meta_results <- data.frame(
+    Exposure = character(),
+    Outcome = character(),
+    Meta_TotalEffect = numeric(),
+    Meta_TotalEffect_CI_lb = numeric(),
+    Meta_TotalEffect_CI_ub = numeric(),
+    Meta_TotalEffect_p = numeric(),
+    Meta_ACME = numeric(),
+    Meta_ACME_CI_lb = numeric(),
+    Meta_ACME_CI_ub = numeric(),
+    Meta_ACME_p = numeric(),
+    Meta_ADE = numeric(),
+    Meta_ADE_CI_lb = numeric(),
+    Meta_ADE_CI_ub = numeric(),
+    Meta_ADE_p = numeric(),
+    Cochran_Q = numeric(),
+    Q_pval = numeric(),
+    Egger_p = numeric(),
+    Meta_ACME_significant = logical(),
+    Meta_TotalEffect_significant = logical(),
+    Meta_ADE_significant = logical(),
+    Source = character(),
+    stringsAsFactors = FALSE
+  )
+
+  # Confidence interval parser
+  extract_numeric_ci <- function(ci_string) {
+    if (is.na(ci_string) || ci_string == "") return(c(NA, NA))
+    as.numeric(unlist(strsplit(ci_string, " - ")))
+  }
+
+  # Loop through all combinations
+  for (i in 1:nrow(combinations)) {
+    exposure <- combinations$Exposure[i]
+    outcome  <- combinations$Outcome[i]
+
+    df_current <- df %>%
+      filter(Exposure == exposure, Outcome == outcome) %>%
+      mutate(
+        ACME_se = ifelse(is.na(ACME_CI), NA, (as.numeric(sub(" -.*", "", ACME_CI)) - ACME) / 1.96),
+        ADE_se = ifelse(is.na(ADE_CI), NA, (as.numeric(sub(" -.*", "", ADE_CI)) - ADE) / 1.96),
+        TotalEffect_se = ifelse(is.na(TotalEffect_CI), NA, (as.numeric(sub(" -.*", "", TotalEffect_CI)) - TotalEffect) / 1.96)
+      )
+
+    # Meta-analysis (Fixed Effects model)
+    meta_acme <- tryCatch(rma(yi = ACME, sei = ACME_se, data = df_current, method = "FE"), error = function(e) NULL)
+    meta_ade <- tryCatch(rma(yi = ADE, sei = ADE_se, data = df_current, method = "FE"), error = function(e) NULL)
+    meta_total <- tryCatch(rma(yi = TotalEffect, sei = TotalEffect_se, data = df_current, method = "FE"), error = function(e) NULL)
+
+    if (!is.null(meta_acme) && !is.null(meta_ade) && !is.null(meta_total)) {
+      meta_results <- rbind(meta_results, data.frame(
+        Exposure = exposure,
+        Outcome = outcome,
+        Meta_TotalEffect = meta_total$b[1],
+        Meta_TotalEffect_CI_lb = meta_total$ci.lb,
+        Meta_TotalEffect_CI_ub = meta_total$ci.ub,
+        Meta_TotalEffect_p = meta_total$pval,
+        Meta_ACME = meta_acme$b[1],
+        Meta_ACME_CI_lb = meta_acme$ci.lb,
+        Meta_ACME_CI_ub = meta_acme$ci.ub,
+        Meta_ACME_p = meta_acme$pval,
+        Meta_ADE = meta_ade$b[1],
+        Meta_ADE_CI_lb = meta_ade$ci.lb,
+        Meta_ADE_CI_ub = meta_ade$ci.ub,
+        Meta_ADE_p = meta_ade$pval,
+        Cochran_Q = meta_acme$QE,
+        Q_pval = meta_acme$QEp,
+        Egger_p = tryCatch(regtest(meta_acme, model = "lm")$pval, error = function(e) NA),
+        Meta_ACME_significant = meta_acme$pval < 0.05,
+        Meta_TotalEffect_significant = meta_total$pval < 0.05,
+        Meta_ADE_significant = meta_ade$pval < 0.05,
+        Source = file_name
+      ))
+    }
+
+    cat("✅ Processed:", exposure, "-> Mediator ->", outcome, "from", file_name, "\n")
+  }
+
+  meta_results_list[[file_name]] <- meta_results
+}
+
+#Combine & Format Final Results
+# 🔹 Combine all datasets
+meta_summary_table <- bind_rows(meta_results_list)
+
+# 🔹 Format confidence intervals
+meta_summary_table <- meta_summary_table %>%
+  mutate(
+    Meta_TotalEffect_CI = paste0(round(Meta_TotalEffect_CI_lb, 4), " - ", round(Meta_TotalEffect_CI_ub, 4)),
+    Meta_ACME_CI = paste0(round(Meta_ACME_CI_lb, 4), " - ", round(Meta_ACME_CI_ub, 4)),
+    Meta_ADE_CI = paste0(round(Meta_ADE_CI_lb, 4), " - ", round(Meta_ADE_CI_ub, 4))
+  ) %>%
+  select(
+    Source, Exposure, Outcome,
+    Meta_TotalEffect, Meta_TotalEffect_CI, Meta_TotalEffect_p, Meta_TotalEffect_significant,
+    Meta_ACME, Meta_ACME_CI, Meta_ACME_p, Meta_ACME_significant,
+    Meta_ADE, Meta_ADE_CI, Meta_ADE_p, Meta_ADE_significant,
+    Cochran_Q, Q_pval, Egger_p
+  )
+
+# 🖨️ Display first few rows
+print(head(meta_summary_table))
+
+#Save Results to Disk
+# 📁 Define output path
+output_dir <- "C:/Users/eduar/.../Meta_Analysis_Results"
+dir.create(output_dir, showWarnings = FALSE)
+
+# 📄 Save each individual file’s results
+for (file_name in names(meta_results_list)) {
+  write_xlsx(meta_results_list[[file_name]], path = file.path(output_dir, paste0(file_name, "_meta_results.xlsx")))
+}
+
+# 📄 Save combined summary
+write_xlsx(meta_summary_table, path = file.path(output_dir, "All_Meta_Analysis_Results.xlsx"))
+
+cat("✅ All results have been saved to:", output_dir, "\n")
+
