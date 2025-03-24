@@ -1,0 +1,60 @@
+# ✅ Enable multi-core processing
+num_cores <- parallel::detectCores() - 1  # Use 21 out of 22 cores
+plan(multisession, workers = num_cores)
+cat("Using", num_cores, "cores for parallel processing.\n")
+
+# ✅ Storage for Results
+mediation_results <- data.table()
+
+# ✅ Define Function for Mediation Analysis
+  mediation_analysis <- function(diet, mediator, outcome, data, adjust = FALSE) {
+  # Define model formulas (without adjustment)
+  med_formula <- as.formula(paste0("`", mediator, "` ~ `", diet, "`"))
+  out_formula <- as.formula(paste0("`", outcome, "` ~ `", diet, "` + `", mediator, "`"))
+  
+  med.fit <- lm(med_formula, data = data)
+  out.fit <- lm(out_formula, data = data)
+  
+  med.out <- mediate(med.fit, out.fit, treat = diet, mediator = mediator, sims = 1000)
+  med.out.summary <- summary(med.out)
+  
+  data.table(
+    Exposure = diet,
+    Mediator = mediator,
+    Outcome = outcome,
+    TotalEffect = med.out.summary$tau.coef,
+    TotalEffect_CI = paste(med.out.summary$tau.ci[1], "-", med.out.summary$tau.ci[2]),
+    TotalEffect_p = med.out.summary$tau.p,
+    ADE = med.out.summary$d0,
+    ADE_CI = paste(med.out.summary$d0.ci[1], "-", med.out.summary$d0.ci[2]),
+    ADE_p = med.out.summary$d0.p,
+    ACME = med.out.summary$z0,
+    ACME_CI = paste(med.out.summary$z0.ci[1], "-", med.out.summary$z0.ci[2]),
+    ACME_p = med.out.summary$z0.p,
+    PercentMediated = (med.out.summary$z0 / med.out.summary$tau.coef) * 100
+  )
+}
+
+# ✅ Generate All Combinations of Variables for Mediation Analysis
+combinations <- expand.grid(dietary_vars, m_core_vars, i_core_vars, stringsAsFactors = FALSE)
+colnames(combinations) <- c("Diet", "Mediator", "Outcome")
+
+# ✅ Execute Mediation Analysis with Progress Bar
+with_progress({
+  p <- progressor(steps = nrow(combinations))  # Define total steps
+  mediation_results <- rbindlist(future_lapply(1:nrow(combinations), function(i) {
+    p(message = paste("Processing:", combinations$Diet[i], "->", 
+                      combinations$Mediator[i], "->", combinations$Outcome[i]))
+    mediation_analysis(combinations$Diet[i], combinations$Mediator[i], combinations$Outcome[i], 
+                       data = merged_04_clean_transformed, adjust = TRUE)
+  }))
+})
+
+# ✅ Display First Few Rows
+head(mediation_results)
+
+# ✅ Save Results to Excel
+write_xlsx(mediation_results, path = "04_noadj_all_.xlsx")
+
+# ✅ Clean up to Free Memory
+gc()
