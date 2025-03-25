@@ -1,0 +1,127 @@
+"""
+Generates heatmaps for Meta-ACME coefficients from a causal mediation meta-analysis,
+visualizing dietary exposures and microbiota outcomes across timepoints and adjustments.
+"""
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+from matplotlib.colors import ListedColormap, BoundaryNorm
+import os
+
+# ========== Settings ==========
+FILE_PATH = "All_Meta_Analysis_Results.xlsx"  # Change as needed
+
+# ========== Functions ==========
+
+def load_and_prepare_data(filepath):
+    df = pd.read_excel(filepath, engine='openpyxl')
+    df.columns = df.columns.str.strip()
+
+    # Parse CI
+    ci_split = df['Meta_ACME_CI'].str.extract(r'(?P<ci_low>-?\d*\.?\d+)\s*-\s*(?P<ci_high>-?\d*\.?\d+)')
+    df['ci_low'] = pd.to_numeric(ci_split['ci_low'], errors='coerce')
+    df['ci_high'] = pd.to_numeric(ci_split['ci_high'], errors='coerce')
+    df["ci_low"], df["ci_high"] = df[["ci_low", "ci_high"]].min(axis=1), df[["ci_low", "ci_high"]].max(axis=1)
+    
+    # Label for heatmap cells
+    df["Label"] = df["Exposure"].astype(str) + " → " + df["Outcome"].astype(str)
+    df["Significant"] = df["Meta_ACME_significant"].astype(str).str.lower().isin(['yes', 'true', '1'])
+
+    return df
+
+
+def generate_heatmaps(df):
+    bins = [-2, -0.05, -0.03, -0.02, -0.01, -0.005, 0, 0.005, 0.01, 0.02, 0.03, 0.05, 2]
+    colors = sns.color_palette("RdBu_r", n_colors=len(bins) - 1)
+    cmap = ListedColormap(colors)
+    norm = BoundaryNorm(bins, ncolors=len(colors))
+
+    tp_labels = {
+        1: "[Mediator: Maternal gut core at delivery]",
+        2: "[Mediator: Maternal gut core at 7 days postpartum]",
+        4: "[Mediator: Maternal gut core at 1 month postpartum]"
+    }
+
+    timepoints = df["TimePoint"].dropna().unique()
+    adjustments = df["Adjustment"].dropna().unique()
+
+    os.makedirs("outputs", exist_ok=True)
+
+    for tp in timepoints:
+        label = tp_labels.get(tp, f"TimePoint: {tp}")
+        fig, axes = plt.subplots(
+            nrows=1, ncols=len(adjustments),
+            figsize=(6 * len(adjustments), 0.8 * df["Outcome"].nunique()),
+            squeeze=False
+        )
+        fig.suptitle(f"ACME Meta-Analysis {label}", fontsize=16)
+
+        for j, adj in enumerate(adjustments):
+            ax = axes[0, j]
+            subset = df[(df["TimePoint"] == tp) & (df["Adjustment"] == adj)]
+
+            if subset.empty:
+                ax.axis('off')
+                ax.set_title(f"Adjustment: {adj} (no data)")
+                continue
+
+            subset = subset.sort_values(by=["Type", "Outcome"])
+            outcome_order = subset["Outcome"].drop_duplicates().tolist()
+
+            heat_data = subset.pivot(index="Outcome", columns="Exposure", values="Meta_ACME").loc[outcome_order]
+            pval_data = subset.pivot(index="Outcome", columns="Exposure", values="Meta_ACME_p").loc[outcome_order]
+
+            def get_asterisks(p):
+                try:
+                    p = float(p)
+                    if p < 0.001:
+                        return "***"
+                    elif p < 0.01:
+                        return "**"
+                    elif p < 0.05:
+                        return "*"
+                    else:
+                        return ""
+                except:
+                    return ""
+
+            annotations = pval_data.applymap(get_asterisks)
+
+            sns.heatmap(
+                heat_data,
+                annot=annotations,
+                fmt='',
+                cmap=cmap,
+                norm=norm,
+                mask=heat_data.isna(),
+                cbar=j == len(adjustments) - 1,
+                cbar_kws={"label": "Meta_ACME coefficient"} if j == len(adjustments) - 1 else None,
+                linewidths=0.5,
+                linecolor='lightgray',
+                ax=ax
+            )
+
+            ax.set_title(f"Adjustment: {adj}", fontsize=12)
+            ax.set_xlabel("Exposure")
+            if j == 0:
+                ax.set_ylabel("")
+            else:
+                ax.set_ylabel("")
+                ax.set_yticklabels([])
+
+        plt.tight_layout(rect=[0, 0, 1, 0.92])
+        fig.subplots_adjust(top=0.90)
+        plt.savefig(f"outputs/meta_acme_heatmap_tp{tp}.png", dpi=300)
+        plt.show()
+
+
+def main():
+    df = load_and_prepare_data(FILE_PATH)
+    generate_heatmaps(df)
+
+
+if __name__ == "__main__":
+    main()
+
