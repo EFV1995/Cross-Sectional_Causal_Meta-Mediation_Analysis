@@ -1,0 +1,53 @@
+"""
+Generates a mediation diagram illustrating the role of maternal microbiota
+in the pathway between maternal diet and infant microbiota outcomes.
+Requires: graphviz (Python package and system Graphviz installation).
+"""
+
+from graphviz import Digraph
+from IPython.display import Image
+
+def create_mediation_diagram():
+    dot = Digraph(comment='Microbiota Mediation Diagram')
+
+    # Global graph styling
+    dot.graph_attr.update({
+        'dpi': '300',
+        'fontname': 'Times New Roman'
+    })
+    dot.node_attr.update({
+        'fontname': 'Times New Roman'
+    })
+    dot.edge_attr.update({
+        'fontname': 'Times New Roman'
+    })
+
+    # Covariates node as HTML-like table
+    dot.node('Cov', '''<
+    <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0">
+      <TR><TD><B>Covariates</B></TD></TR>
+      <TR><TD>Delivery mode</TD></TR>
+    </TABLE>
+    >''', shape='plaintext')
+
+    # Main nodes
+    dot.node('Diet', 'Dietary Indices\n(MMDS, DII, HEI, DQI)', shape='box', style='filled', fillcolor='lightblue')
+    dot.node('Maternal', 'Maternal core\nmicrobiota and alpha\ndiversity', shape='box', style='filled', fillcolor='lightgreen')
+    dot.node('Infant', 'Infant core microbiota\nand alpha diversity', shape='box', style='filled', fillcolor='lightyellow')
+
+    # Directed edges
+    dot.edge('Diet', 'Maternal', label='Path A')
+    dot.edge('Diet', 'Infant', label='Path B')
+    dot.edge('Maternal', 'Infant', label='Path C')
+    dot.edge('Cov', 'Maternal', arrowhead='none')
+    dot.edge('Cov', 'Infant', arrowhead='none')
+
+    # Save and render
+    dot.format = 'png'
+    filename = dot.render('microbiota_mediation_diagram', cleanup=True)
+    
+    return Image(filename)
+
+# If run directly (e.g. from a notebook or script)
+if __name__ == '__main__':
+    display(create_mediation_diagram())
