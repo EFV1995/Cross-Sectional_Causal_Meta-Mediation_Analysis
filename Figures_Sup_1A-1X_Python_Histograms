@@ -1,0 +1,131 @@
+==============================================================================================================================================================================
+Python script to perform histrograms on individual CMAs. Stratifying by Exposure, bacteria and diversirty outcome, and includes annotations.
+==============================================================================================================================================================================
+import os
+import string
+import matplotlib.pyplot as plt
+import pandas as pd
+import numpy as np
+
+# Assuming dfm is your DataFrame — define or load it before running the rest of the script
+# Example:
+# dfm = pd.read_csv("your_data.csv")
+
+# Create combined label
+dfm["Label"] = (
+    dfm["Exposure"].astype(str) + " → " +
+    dfm["Mediator"].astype(str) + " → " +
+    dfm["Outcome"].astype(str)
+)
+
+# TimePoint → Title map
+tp_labels = {
+    1: "[Mediator: Maternal gut core microbiota at delivery]",
+    2: "[Mediator: Maternal gut core microbiota at 7 days postpartum]",
+    4: "[Mediator: Maternal gut core microbiota at 1 month postpartum]",
+}
+
+def plot_acme_distribution(data, exposure, type_, timepoint, panel_label=None, save=False, output_folder="ACME_Plots"):
+    subset = data[
+        (data["Exposure"] == exposure) &
+        (data["Type"] == type_) &
+        (data["TimePoint"] == timepoint)
+    ]
+
+    if subset.empty:
+        print(f"⚠️ Skipping {exposure} ({type_}, TimePoint {timepoint}): No data available.")
+        return
+
+    q1 = subset["ACME"].quantile(0.25)
+    q3 = subset["ACME"].quantile(0.75)
+    iqr = q3 - q1
+    lower_bound = q1 - 0.8 * iqr
+    upper_bound = q3 + 0.8 * iqr
+
+    outliers = subset[(subset["ACME"] < lower_bound) | (subset["ACME"] > upper_bound)].copy()
+
+    median = subset["ACME"].median()
+    if outliers.empty:
+        subset = subset.copy()
+        subset["abs_deviation"] = (subset["ACME"] - median).abs()
+        outliers = subset.sort_values(by="abs_deviation", ascending=False).head(10)
+    else:
+        outliers["abs_deviation"] = (outliers["ACME"] - median).abs()
+        outliers = outliers.sort_values(by="abs_deviation", ascending=False).head(10)
+
+    outliers["Annotated_Label"] = (
+        outliers["Label"] + " [" + outliers["Adjustment"].astype(str) + "]"
+    )
+
+    plt.figure(figsize=(16, 8))
+    plt.hist(subset["ACME"].dropna(), bins=30, color="steelblue", edgecolor="black", alpha=0.8)
+    plt.axvline(x=0, color='gray', linestyle='--', label='Zero Effect')
+    plt.axvline(subset["ACME"].mean(), color='red', linestyle='--', label='Mean Effect')
+
+    # Panel label (e.g., "1A", "1B", etc.)
+    if panel_label:
+        plt.text(
+            0.01, 0.95, panel_label,
+            transform=plt.gca().transAxes,
+            fontsize=14, fontweight='bold',
+            ha='left', va='top'
+        )
+
+    base_y_offset = 20
+    step_y = 25
+    step_x = 0.0004
+    ha_options = ['left', 'right']
+    font_sizes = [10, 9, 8, 7]
+
+    for i, (_, row) in enumerate(outliers.iterrows()):
+        x = row["ACME"] + ((-1) ** i) * (i % 3) * step_x
+        y_offset = base_y_offset + (i % 6) * step_y
+        label = row["Annotated_Label"]
+        ha = ha_options[i % len(ha_options)]
+        font_size = font_sizes[min(i // 5, len(font_sizes) - 1)]
+
+        plt.annotate(
+            label,
+            xy=(row["ACME"], 0),
+            xytext=(x, y_offset),
+            textcoords='offset points',
+            ha=ha,
+            va='bottom',
+            rotation=60,
+            fontsize=font_size,
+            color='darkred',
+            arrowprops=dict(
+                arrowstyle='->',
+                lw=0.7,
+                color='gray',
+                connectionstyle="angle,angleA=90,angleB=0,rad=5"
+            )
+        )
+
+    title_suffix = tp_labels.get(timepoint, f"TimePoint {timepoint}")
+    plt.title(f"{exposure} — ACME Distribution ({type_.capitalize()})\n{title_suffix}", fontsize=14)
+    plt.xlabel("ACME", fontsize=12)
+    plt.ylabel("Frequency", fontsize=12)
+    plt.legend()
+    plt.tight_layout()
+
+    if save:
+        os.makedirs(output_folder, exist_ok=True)
+        filename = f"{panel_label}_{exposure}_{type_}_tp{timepoint}_acme_outliers.png".replace("/", "-")
+        filepath = os.path.join(output_folder, filename)
+        plt.savefig(filepath, dpi=300)
+        print(f"✅ Saved: {filepath}")
+
+    plt.show()
+
+
+# Plotting loop
+letters = string.ascii_uppercase
+panel_counter = 0
+
+for exposure in dfm["Exposure"].unique():
+    for type_ in ["bacteria", "diversity"]:
+        for tp in sorted(dfm["TimePoint"].dropna().unique()):
+            label = f"1{letters[panel_counter]}"
+            plot_acme_distribution(dfm, exposure, type_, timepoint=tp, panel_label=label, save=True)
+            panel_counter += 1
