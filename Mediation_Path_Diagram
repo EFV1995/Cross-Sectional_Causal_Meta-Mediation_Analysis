@@ -1,0 +1,101 @@
+"""
+Mediation Path Diagram: MMDS → Mediators → Simpson Diversity
+
+Creates a visual diagram of top mediators and their paths using NetworkX and Matplotlib.
+Displays both unadjusted and adjusted (by delivery mode) estimates for 'a', 'b', and 'a*b'.
+
+Author: [Your Name]
+Date: [Insert Date]
+"""
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import networkx as nx
+
+# ─────────────────────────────────────────────────────────
+# Load merged and filtered data
+merged_df = pd.merge(results_df, results_df_adj, on='mediator')
+
+# Filter and select top mediators based on unadjusted |a*b|
+top_n = 8
+filtered_df = merged_df[merged_df['mediator'] != 'uncultured_mother']
+top_mediators = filtered_df.reindex(
+    filtered_df['ab_unadj'].abs().sort_values(ascending=False).index
+).head(top_n)
+
+# ─────────────────────────────────────────────────────────
+# 🏷Setup custom node labels
+custom_labels = {
+    'MMDS': 'MMDS',
+    'SimpsonDiversity_infant_z': 'Simpson\nDiversity'
+}
+custom_labels.update({row.mediator: row.mediator for row in top_mediators.itertuples()})
+
+# ─────────────────────────────────────────────────────────
+# Create NetworkX graph
+G = nx.DiGraph()
+G.add_node("MMDS", pos=(0, 0))
+G.add_node("SimpsonDiversity_infant_z", pos=(2, 0))
+pos = {'MMDS': (0, 0), 'SimpsonDiversity_infant_z': (2, 0)}
+
+# Add mediators and edges
+for i, row in enumerate(top_mediators.itertuples()):
+    mediator = row.mediator
+    y = 2 - i * 0.6
+    pos[mediator] = (1, y)
+
+    # Edge labels
+    a_label = f"a: {row.a_unadj:.2f}{'*' if row.pval_a_unadj < 0.05 else ''} / {row.a_adj:.2f}{'*' if row.pval_a_adj < 0.05 else ''}"
+    b_label = f"b: {row.b_unadj:.2f}{'*' if row.pval_b_unadj < 0.05 else ''} / {row.b_adj:.2f}{'*' if row.pval_b_adj < 0.05 else ''}"
+
+    G.add_edge("MMDS", mediator, label=a_label)
+    G.add_edge(mediator, "SimpsonDiversity_infant_z", label=b_label)
+
+# ─────────────────────────────────────────────────────────
+# Plot Setup
+plt.figure(figsize=(14, 8))
+nx.draw(G, pos, labels=custom_labels, with_labels=True,
+        node_size=3000, node_color='lightyellow',
+        font_size=9, arrows=True, arrowstyle='-|>')
+
+edge_labels = nx.get_edge_attributes(G, 'label')
+nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels,
+                             font_color='darkred', font_size=9)
+
+# Annotate indirect effects a*b
+for row in top_mediators.itertuples():
+    x, y = pos[row.mediator]
+    plt.text(x, y + 0.25,
+             f"a×b: {row.ab_unadj:.2f} / {row.ab_adj:.2f}",
+             ha='center', fontsize=9, color='blue')
+
+# ─────────────────────────────────────────────────────────
+# Add direct effect (c′) arrow
+x1, y1 = pos['MMDS']
+x2, y2 = pos['SimpsonDiversity_infant_z']
+start_x = x1 + 0.10
+end_x = x2 - 0.08
+
+plt.annotate("",
+             xy=(end_x, y1), xycoords='data',
+             xytext=(start_x, y1), textcoords='data',
+             arrowprops=dict(arrowstyle='-|>', lw=2, color='black'),
+             annotation_clip=False)
+
+# Label direct effect
+c_unadj = top_mediators["c_unadj"].mean()
+c_adj = top_mediators["c_adj"].mean()
+pval_c_unadj = top_mediators["pval_c_unadj"].mean()
+pval_c_adj = top_mediators["pval_c_adj"].mean()
+
+c_text = f"c′: {c_unadj:.2f}{'*' if pval_c_unadj < 0.05 else ''} / {c_adj:.2f}{'*' if pval_c_adj < 0.05 else ''}"
+plt.text((start_x + end_x) / 2 + 0.05, y1 + 0.05, c_text,
+         ha='center', fontsize=10, color='darkred')
+
+# ─────────────────────────────────────────────────────────
+# Final Touches
+plt.title("Mediation Path Diagram (Unadjusted / Adjusted by Delivery Mode)", fontsize=13)
+plt.axis('off')
+plt.tight_layout()
+plt.savefig("mediation_path_short_direct_arrow_MMDS_Simpson_.png", dpi=300)
+plt.show()
