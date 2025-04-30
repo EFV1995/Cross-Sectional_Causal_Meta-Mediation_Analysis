@@ -1,0 +1,105 @@
+"""Adjusted Mediation Analysis Script
+
+Performs mediation analysis for each '_mother' mediator in the dataset,
+adjusting for delivery mode as a covariate.
+Bootstrap resampling is used to estimate confidence intervals and empirical p-values.
+
+Dependencies:
+- pandas
+- numpy
+- statsmodels
+- joblib
+- tqdm
+"""
+
+import pandas as pd
+import numpy as np
+import statsmodels.formula.api as smf
+from joblib import Parallel, delayed
+from tqdm import tqdm
+
+# Parameters
+PREDICTOR = 'Total_MMDS_sum'
+OUTCOME = 'SimpsonDiversity_infant_z'
+COVARIATE = 'delivery_mode'
+BOOTSTRAP_ITERATIONS = 1000
+
+
+def mediation_with_bootstrap_cov(df, X, M, Y, C, n_bootstrap=1000):
+    """Performs mediation analysis with bootstrap CI adjusted for a covariate."""
+    try:
+        data = df[[X, M, Y, C]].dropna()
+
+        # Fit models with covariate
+        model_m = smf.ols(f"Q('{M}') ~ Q('{X}') + Q('{C}')", data=data).fit()
+        model_y = smf.ols(f"Q('{Y}') ~ Q('{X}') + Q('{M}') + Q('{C}')", data=data).fit()
+
+        # Extract coefficients
+        a = model_m.params[f"Q('{X}')"]
+        b = model_y.params[f"Q('{M}')"]
+        c_prime = model_y.params[f"Q('{X}')"]
+
+        # P-values
+        pval_a = model_m.pvalues[f"Q('{X}')"]
+        pval_b = model_y.pvalues[f"Q('{M}')"]
+        pval_c = model_y.pvalues[f"Q('{X}')"]
+
+        # Effects
+        indirect = a * b
+        total = indirect + c_prime
+
+        # Bootstrap indirect effects
+        boot_indirect = []
+        for _ in range(n_bootstrap):
+            sample = data.sample(frac=1, replace=True)
+            try:
+                a_ = smf.ols(f"Q('{M}') ~ Q('{X}') + Q('{C}')", data=sample).fit().params[f"Q('{X}')"]
+                b_ = smf.ols(f"Q('{Y}') ~ Q('{X}') + Q('{M}') + Q('{C}')", data=sample).fit().params[f"Q('{M}')"]
+                boot_indirect.append(a_ * b_)
+            except:
+                continue
+
+        ci_lower = np.percentile(boot_indirect, 2.5)
+        ci_upper = np.percentile(boot_indirect, 97.5)
+
+        # Empirical p-value
+        pseudo_p = np.mean(np.array(boot_indirect) < 0) if indirect > 0 else np.mean(np.array(boot_indirect) > 0)
+        pseudo_p *= 2
+
+        return {
+            'mediator': M,
+            'a': a,
+            'pval_a': pval_a,
+            'b': b,
+            'pval_b': pval_b,
+            'direct_effect (c′)': c_prime,
+            'pval_c_prime': pval_c,
+            'indirect_effect (a*b)': indirect,
+            'pseudo_pval_ab': pseudo_p,
+            'total_effect': total,
+            'ci_lower_ab': ci_lower,
+            'ci_upper_ab': ci_upper
+        }
+
+    except Exception as e:
+        print(f"⚠️ Error with mediator '{M}': {e}")
+        return None
+
+
+if __name__ == "__main__":
+    # Load your DataFrame `df` here
+    df = pd.read_csv("your_data.csv")  # Replace with actual file path
+
+    # Extract mediator columns
+    mediators = [col for col in df.columns if col.endswith('_mother')]
+
+    # Run mediation analyses in parallel
+    results = Parallel(n_jobs=-1)(
+        delayed(mediation_with_bootstrap_cov)(df, PREDICTOR, m, OUTCOME, COVARIATE, BOOTSTRAP_ITERATIONS)
+        for m in tqdm(mediators)
+    )
+
+    # Compile results and save
+    results_df = pd.DataFrame([r for r in results if r is not None])
+    results_df.to_excel("MMDS_Simpson_mediation_adjusted_delivery_mode.xlsx", index=False)
+    print(results_df.head())
