@@ -1,0 +1,86 @@
+
+"""
+Diet-Microbiota/Diversity Linear Regression Analysis
+
+Performs simple OLS regressions between dietary scores and microbial features
+(including alpha diversity indices), applies FDR correction, and exports results.
+
+Author: Eduard Flores
+Date: 30_04_2025
+"""
+
+import pandas as pd
+import statsmodels.formula.api as smf
+from statsmodels.stats.multitest import multipletests
+
+# ─────────────────────────────────────────────────────────
+# Define Predictors and Outcomes
+
+# Diet scores as predictors
+diet_cols = ['Total_DII_sum', 'Total_MMDS_sum', 'Total_DQI_sum', 'Total_HEI_sum']
+
+# Alpha diversity metrics to ensure inclusion
+diversity_cols = [
+    'ShannonDiversity_infant', 'SimpsonDiversity_infant',
+    'InvSimpsonDiversity_infant', 'Chao1Diversity_infant',
+    'ShannonDiversity_mother', 'SimpsonDiversity_mother',
+    'InvSimpsonDiversity_mother', 'Chao1Diversity_mother'
+]
+
+# Outcome variables: all except predictors and Sample_ID
+exclude_cols = ['Sample_ID'] + diet_cols
+bact_cols = [col for col in df.columns if col not in exclude_cols]
+
+# Include diversity metrics in outcome list (if not already present)
+bact_cols = list(set(bact_cols + diversity_cols))
+
+# ─────────────────────────────────────────────────────────
+# Perform Regressions
+
+results = []
+
+for bact in bact_cols:
+    for diet in diet_cols:
+        try:
+            formula = f"Q('{bact}') ~ Q('{diet}')"
+            model = smf.ols(formula, data=df).fit()
+
+            beta = model.params[1]
+            pval = model.pvalues[1]
+            ci_lower, ci_upper = model.conf_int().iloc[1]
+
+            results.append({
+                'Bacteria_or_Diversity': bact,
+                'Diet': diet,
+                'Estimate': beta,
+                'CI_Lower': ci_lower,
+                'CI_Upper': ci_upper,
+                'P_value': pval
+            })
+        except Exception as e:
+            print(f"⚠️ Skipping {bact} ~ {diet}: {e}")
+
+# ─────────────────────────────────────────────────────────
+# Post-processing and FDR Correction
+
+results_df = pd.DataFrame(results)
+
+# FDR correction using Benjamini-Hochberg
+reject, pvals_corrected, _, _ = multipletests(results_df['P_value'], method='fdr_bh')
+results_df['FDR_adjusted_p'] = pvals_corrected
+results_df['FDR_Significant'] = reject
+results_df['P_value_Significant'] = results_df['P_value'] < 0.05
+
+# Subset results
+fdr_hits = results_df[results_df['FDR_Significant']]
+raw_hits = results_df[results_df['P_value_Significant']]
+
+# ─────────────────────────────────────────────────────────
+# Export Results to Excel
+
+output_file = "diet_microbiota_diversity_regression_with_FDR.xlsx"
+with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
+    results_df.to_excel(writer, sheet_name='All_Results', index=False)
+    raw_hits.to_excel(writer, sheet_name='Significant_Hits', index=False)
+
+print(f"Saved regression results with FDR correction to '{output_file}'")
