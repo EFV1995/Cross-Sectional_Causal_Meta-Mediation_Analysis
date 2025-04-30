@@ -1,0 +1,142 @@
+# Load libraries
+library(readxl)
+library(tidyverse)
+library(ggrepel)
+library(ggplot2)
+
+# Read data
+file_path <- "C:/Users/eduar/OneDrive/Desktop/MAMI_data_cleaning_data_24_04_2025.xlsx"
+clinical_data <- read_excel(path = file_path, sheet = "clinical_data")
+
+# Explore structure
+str(diet_indices)
+str(maternal_nutrients)
+str(maternal_foods)
+str(clinical_data)
+str(genus_infant_1month)
+str(genus_mother_1month)
+
+# Merge all datasets by Sample_ID
+merged_data <- list(
+  diet_indices,
+  maternal_nutrients,
+  maternal_foods,
+  clinical_data,
+  genus_infant_1month,
+  genus_mother_1month
+) %>% reduce(inner_join, by = "Sample_ID")
+
+# Keep only diet indices + food variables
+columns_to_keep <- union(colnames(diet_indices), colnames(maternal_foods))
+diet_and_food_df <- merged_data %>% select(all_of(columns_to_keep))
+
+# Remove a specific sample if needed
+diet_and_food_df <- diet_and_food_df %>% filter(Sample_ID != "S053M04H")
+
+# Scale variables
+indices_names <- colnames(diet_indices)[-1]
+foods_names   <- colnames(maternal_foods)[-1]
+
+diet_scaled <- scale(diet_and_food_df %>% select(all_of(indices_names)))
+food_scaled <- scale(diet_and_food_df %>% select(all_of(foods_names)))
+df_scaled   <- scale(diet_and_food_df %>% select(-Sample_ID))  # full matrix for PCA arrow correlation
+
+# PCA
+pca <- prcomp(diet_scaled, center = TRUE, scale. = TRUE)
+pca_scores <- pca$x[, 1:2]
+
+# Elbow method to choose k
+wss <- map_dbl(1:10, ~ kmeans(pca_scores, centers = .x, nstart = 10)$tot.withinss)
+ggplot(data.frame(k = 1:10, WSS = wss), aes(x = k, y = WSS)) +
+  geom_line() + geom_point(size = 2) +
+  labs(title = "Elbow Method for Optimal k", x = "Number of clusters", y = "WSS") +
+  theme_minimal()
+
+# K-means clustering
+set.seed(123)
+kmeans_result <- kmeans(pca_scores, centers = 3)
+clusters <- kmeans_result$cluster
+
+# Prepare PCA biplot data
+scores_df <- as.data.frame(pca_scores)
+scores_df$Sample_ID <- diet_and_food_df$Sample_ID
+scores_df$cluster <- factor(clusters)
+
+arrow_matrix <- cor(df_scaled, pca$x[, 1:2], use = "pairwise.complete.obs")
+
+# Split arrows into indices and foods
+arrows_indices <- arrow_matrix[rownames(arrow_matrix) %in% indices_names, , drop = FALSE] %>%
+  as.data.frame() %>% rownames_to_column("Variable")
+
+arrows_foods <- arrow_matrix[rownames(arrow_matrix) %in% foods_names, , drop = FALSE] %>%
+  as.data.frame() %>% rownames_to_column("Variable")
+
+# Rename long index labels
+arrows_indices <- arrows_indices %>%
+  mutate(Variable = case_when(
+    Variable == "Total_MMDS_sum" ~ "MMDS",
+    Variable == "Total_DQI_sum"  ~ "DQI",
+    Variable == "Total_HEI_sum"  ~ "HEI",
+    Variable == "Total_DII_sum"  ~ "DII",
+    TRUE ~ Variable
+  ))
+
+# Correlation of foods with indices
+food_cor_indices <- diet_and_food_df %>%
+  select(all_of(foods_names)) %>%
+  cor(diet_and_food_df %>% select(all_of(indices_names)), use = "complete.obs")
+
+# Get top 8 foods per index
+top_foods_list <- map(indices_names, function(index) {
+  cor_vector <- food_cor_indices[, index]
+  top_vars <- sort(cor_vector, decreasing = TRUE)[1:8]
+  tibble(Variable = names(top_vars), Index = index)
+})
+highlighted_foods_vars <- bind_rows(top_foods_list)
+
+highlight_foods <- arrows_foods %>%
+  filter(Variable %in% highlighted_foods_vars$Variable)
+
+# Plot: PCA biplot with indices & top foods
+key_indices <- c("MMDS", "DQI", "HEI", "DII")
+arrows_key <- arrows_indices %>% filter(Variable %in% key_indices)
+arrows_other <- arrows_indices %>% filter(!Variable %in% key_indices)
+
+pca_plot <- ggplot(scores_df, aes(x = PC1, y = PC2, color = factor(cluster))) +
+  geom_point(size = 2, alpha = 0.7) +
+  stat_ellipse(type = "norm", size = 0.3, linetype = "dashed", alpha = 0.6) +
+
+  # Indices arrows (black)
+  geom_segment(data = arrows_indices,
+               aes(x = 0, y = 0, xend = PC1 * 2, yend = PC2 * 2),
+               inherit.aes = FALSE, arrow = arrow(length = unit(0.2, "cm")),
+               color = "black", linewidth = 0.8) +
+
+  geom_text_repel(data = arrows_other,
+                  aes(x = PC1 * 2, y = PC2 * 2, label = Variable),
+                  inherit.aes = FALSE, size = 4.8, color = "black",
+                  segment.color = "black", segment.size = 0.5) +
+
+  geom_text_repel(data = arrows_key,
+                  aes(x = PC1 * 2, y = PC2 * 2, label = Variable),
+                  inherit.aes = FALSE, size = 5.5, color = "black",
+                  segment.color = "black", segment.size = 0.5) +
+
+  # Foods arrows (darkcyan)
+  geom_segment(data = highlight_foods,
+               aes(x = 0, y = 0, xend = PC1 * 2, yend = PC2 * 2),
+               inherit.aes = FALSE, arrow = arrow(length = unit(0.2, "cm")),
+               color = "darkcyan", alpha = 0.7) +
+
+  geom_text_repel(data = highlight_foods,
+                  aes(x = PC1 * 2, y = PC2 * 2, label = Variable),
+                  inherit.aes = FALSE, size = 4.8, color = "black", alpha = 0.9,
+                  segment.color = "darkcyan", segment.size = 0.4, segment.alpha = 0.6) +
+
+  labs(title = "PCA Biplot: Dietary Indices & Top Foods",
+       x = "PC1", y = "PC2", color = "Cluster") +
+  theme_minimal()
+
+# Save plot
+ggsave("pca_biplot_indices_foods_ellipses.png", plot = pca_plot, width = 10, height = 8, dpi = 300)
+print(pca_plot)
